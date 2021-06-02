@@ -1,4 +1,4 @@
-# Simulations 
+# Simulations (run after manipulation)
 
 #'
 #'We start by creating all possible initial orders of the draw. 
@@ -9,6 +9,9 @@
 #'This returns a total of 10! permutations. 
 #'We use round-robin combinations to create all possible schedules based on each initial simulated draw. 
 
+library(tidyverse)
+library(gtools)
+library(TouRnament)
   
 # All permutations of length 10 of the teams vector
 draws <- permutations(10, 10, 1:10) 
