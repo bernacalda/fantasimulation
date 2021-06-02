@@ -1,5 +1,5 @@
 ---
-title: "Fantaculo"
+title: "Fantasimulation"
 output: html_notebook
 ---
 
