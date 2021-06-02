@@ -1,0 +1,324 @@
+---
+title: "Fantaculo"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, eval = TRUE)
+
+library(tidyverse)
+library(readr)
+library(viridis)
+library(gtools)
+library(TouRnament)
+
+# Initialise values
+players <- 10
+mdays <- 36
+```
+
+# Read data
+
+Import excel file "Calendario" and return a list with scores in each match day
+
+```{r data}
+
+# Load data and break in two
+data <- readxl::read_excel("./Calendario_Il-Gambionato.xlsx", skip = 2, col_names = F)
+
+data1 <- data[,1:4]
+data1 <- data1[,c(1,2,4,3)]
+data2 <- data[,7:10]
+data2 <- data2[,c(1,2,4,3)]
+
+# Set number of splits 
+splits <- nrow(data1)/(players/2+1)
+break1 <- list()
+break2 <- list()
+
+# Split into matchdays
+split1 <- split(data1,rep(1:splits,each=players/2+1))
+split2 <- split(data2,rep(1:splits,each=players/2+1))
+mdSplit <- c(split1, split2)
+mdNames <- list()
+break1 <- list()
+break2 <- list()
+
+for(i in 1:mdays){
+  mdSplit[[i]][1,1] <- str_remove_all(mdSplit[[i]][1,1], "[^\\d]+")
+  mdNames[[i]] <- mdSplit[[i]][1,1]
+  mdSplit[[i]] <- mdSplit[[i]][-1,]
+  mdSplit[[i]] <- mdSplit[[i]] %>% 
+    mutate(across(where(is.double), ~ as.character(.)))
+  break1[[i]] <- mdSplit[[i]][,1:2]
+  names(break1[[i]]) <- c("team", "score")
+  break2[[i]] <- mdSplit[[i]][,3:4]
+  names(break2[[i]]) <- c("team", "score")
+  mdSplit[[i]] <- rbind(break1[[i]],  break2[[i]])
+  mdSplit[[i]] <- mdSplit[[i]] %>% arrange(team)
+  mdSplit[[i]]$round <- as.character(i)
+}
+
+# Name list objects
+mdNames <- unlist(mdNames)
+names(mdSplit) <- mdNames
+
+# Create unique dataframe
+scoresDf <- mdSplit[[1]]
+for(i in 2:length(mdSplit)){
+  scoresDf <- rbind(scoresDf, mdSplit[[i]])
+}
+scoresDf <- scoresDf %>% 
+  unite(roundTeam, round, team)
+
+```
+
+# Standard deviation
+
+Compute standard deviation for each team
+
+```{r standard_deviation, fig.height=6, fig.width=8}
+sdDf <- mdSplit[[1]] %>% 
+  rename(score1=score)
+
+for(i in 2:mdays){
+  sdDf <- sdDf %>% select(-round) %>% 
+    left_join(mdSplit[[i]], by = "team") %>%
+    rename(!!paste0("score", i):=score)
+}
+
+sdDf <- sdDf %>% select(-round) 
+sdDf <- as.data.frame(t(sdDf)) 
+names(sdDf) <- sdDf[1,]
+sdDf <- sdDf[-1,] %>%  
+  mutate(across(where(is.character), ~ as.numeric(.)))
+
+# Standard deviation
+sdDfSum <- sdDf %>% 
+  summarise(across(where(is.numeric), ~ sd(.x, na.rm = TRUE)))
+
+sdDfL <- sdDf %>% 
+  pivot_longer(everything(), names_to = "group", values_to = "score") %>%
+  group_by(group) %>%
+  mutate(sd = sd(score)) %>%
+  ungroup()
+
+sdDfL$rank[sdDfL$group=="Picchio FC"] <- 1
+sdDfL$rank[sdDfL$group=="FC Lausangeles Galaxy"] <- 2
+sdDfL$rank[sdDfL$group=="Real Katenaccio"] <- 3
+sdDfL$rank[sdDfL$group=="Atletico Focaccia"] <- 4
+sdDfL$rank[sdDfL$group=="Brisolo"] <- 5
+sdDfL$rank[sdDfL$group=="Askari"] <- 6
+sdDfL$rank[sdDfL$group=="FC Sellaronda"] <- 7
+sdDfL$rank[sdDfL$group=="L’Androne Inisvizzero"] <- 8
+sdDfL$rank[sdDfL$group=="US Falco"] <- 9
+sdDfL$rank[sdDfL$group=="Terra Promessa"] <- 10
+
+# Boxplot
+sdDfL %>%
+  ggplot(aes(x=reorder(group, sd), y=score, fill=group)) +
+    geom_boxplot() +
+    scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90))+
+    ggtitle("La variantsa, ordinata da sinistra verso destra in ordine crescente") +
+    xlab("") + 
+    ylab("") 
+
+# Boxplot 2
+sdDfL %>%
+  ggplot(aes(x=reorder(group, rank), y=score, fill=group, alpha=0.6)) +
+    geom_boxplot() +
+    scale_fill_brewer(palette="Set3") +
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90), legend.position = "none")+
+    ggtitle("Distribuzione punteggi in ordine di classifica, da sinistra (primo) verso destra (ultimo)") +
+    xlab("") + 
+    ylab("") 
+
+```
+
+# Simulations 
+
+We start by creating all possible initial orders of the draw. The number of permutations of a vector of length 10, without repetitions is 
+
+$$P(n,r) = \frac{n!}{(n-r)!}$$
+
+Where $n$ is the number of objects (10) and $r$ is the length of the simulated vector (10), therefore $P(10,10) = 10!$. This returns a total of `r factorial(10)` permutations. We use round-robin combinations to create all possible schedules based on each initial simulated draw. 
+
+```{r sim, eval = F}
+
+# All permutations of length 10 of the teams vector
+draws <- permutations(10, 10, 1:10) 
+sim <- 10000
+
+# Select random subset of permutations
+set.seed(1234)
+drawsSub <- draws[sample(nrow(draws), sim),] 
+
+# Team names df
+teamNames <- unique(mdSplit[[1]]$team) 
+teamNames <- 
+  as_tibble(cbind(teamNames, 1:players)) %>% 
+  rename(team=V2)
+
+# Loop: Round-robin tournaments, creates nrow(drawsSub) round robin schedules, adds scores  
+rr <- list()
+rr2 <- list()
+rank1 <- list()
+rank2 <- list()
+finalTable <- list()
+
+for(j in 1:nrow(drawsSub)){
+  teams <- drawsSub[j,]
+  rr[[j]] <- 
+    roundrobin(teamvector=teams, second_round=T, randomize=F)
+  rr2[[j]] <- rr[[j]] %>% 
+    mutate(Matchday=Matchday+18)
+  rr[[j]] <- rbind(rr[[j]], rr2[[j]]) %>%
+    mutate(across(where(is.numeric), ~ as.character(.)))
+  names(rr[[j]]) <- c("round", "team1", "team2")
+
+  # Add score of each team in each round 
+  rr[[j]] <- rr[[j]] %>% 
+    left_join(teamNames, by=c("team1"="team")) %>% 
+    rename(team1Name=teamNames) %>% 
+    left_join(teamNames, by=c("team2"="team")) %>% 
+    rename(team2Name=teamNames) %>%
+    unite(roundTeam1Name, round, team1Name, remove = F) %>%
+    unite(roundTeam2Name, round, team2Name) %>%
+    select(roundTeam1Name, roundTeam2Name) %>%
+    left_join(scoresDf, by=c("roundTeam1Name"="roundTeam")) %>%
+    rename(score1=score) %>%
+    left_join(scoresDf, by=c("roundTeam2Name"="roundTeam")) %>%
+    rename(score2=score) %>% 
+    separate(roundTeam1Name, c("round", "team1Name"), sep = "_") %>%
+    separate(roundTeam2Name, c("round2", "team2Name"), sep = "_") %>%
+    select(-round2) %>%
+    mutate(across(score1:score2, ~ as.numeric(.)))
+  
+  # Convert scores into goals
+  rr[[j]]$goal1 <- case_when(
+    rr[[j]]$score1 < 66 ~ 0,
+    rr[[j]]$score1 >= 66 & rr[[j]]$score1 < 71 ~ 1,
+    rr[[j]]$score1 >= 71 & rr[[j]]$score1 < 76 ~ 2,
+    rr[[j]]$score1 >= 76 & rr[[j]]$score1 < 81 ~ 3,
+    rr[[j]]$score1 >= 81 & rr[[j]]$score1 < 86 ~ 4,
+    rr[[j]]$score1 >= 86 & rr[[j]]$score1 < 91 ~ 5,
+    rr[[j]]$score1 >= 91 & rr[[j]]$score1 < 96 ~ 6,
+    rr[[j]]$score1 >= 96 ~ 7,
+    TRUE ~ 0)
+  
+  rr[[j]]$goal2 <- case_when(
+    rr[[j]]$score2 < 66 ~ 0,
+    rr[[j]]$score2 >= 66 & rr[[j]]$score2 < 71 ~ 1,
+    rr[[j]]$score2 >= 71 & rr[[j]]$score2 < 76 ~ 2,
+    rr[[j]]$score2 >= 76 & rr[[j]]$score2 < 81 ~ 3,
+    rr[[j]]$score2 >= 81 & rr[[j]]$score2 < 86 ~ 4,
+    rr[[j]]$score2 >= 86 & rr[[j]]$score2 < 91 ~ 5,
+    rr[[j]]$score2 >= 91 & rr[[j]]$score2 < 96 ~ 6,
+    rr[[j]]$score2 >= 96 ~ 7,
+    TRUE ~ 0)
+  
+  # Convert goals into league points
+  rr[[j]]$points1 <- case_when(
+    rr[[j]]$goal1 > rr[[j]]$goal2 ~ 3,
+    rr[[j]]$goal1 < rr[[j]]$goal2 ~ 0,
+    rr[[j]]$goal1 == rr[[j]]$goal2 ~ 1,
+    TRUE ~ 99)
+  
+  rr[[j]]$points2 <- case_when(
+    rr[[j]]$goal2 > rr[[j]]$goal1 ~ 3,
+    rr[[j]]$goal2 < rr[[j]]$goal1 ~ 0,
+    rr[[j]]$goal2 == rr[[j]]$goal1 ~ 1,
+    TRUE ~ 99)
+  
+  # Sum up points by team and construct ranking for each simulation
+  rank1[[j]] <- rr[[j]] %>% 
+    select(team1Name, score1, points1) %>%
+    group_by(team1Name) %>%
+    summarise(points1=sum(points1), score1=sum(score1))
+  
+  rank2[[j]] <- rr[[j]] %>% 
+    select(team2Name, score2, points2) %>%
+    group_by(team2Name) %>%
+    summarise(points2=sum(points2), score2=sum(score2))
+  
+  finalTable[[j]] <- rank1[[j]] %>%
+    left_join(rank2[[j]], by=c("team1Name"="team2Name")) %>%
+    mutate(points=points1+points2, score=score1+score2) %>%
+    rename(team=team1Name) %>%
+    select(team, score, points) %>%
+    #mutate(rank = dense_rank(desc(points, score))) %>%
+    arrange(desc(points, score)) 
+  finalTable[[j]]$rank <- rownames(finalTable[[j]])
+}
+
+# Dataset for plot
+plotDf <- finalTable[[1]]
+for(j in 2:nrow(drawsSub)){
+  plotDf <- rbind(plotDf, finalTable[[j]])
+}
+plotDf$rank <- as.numeric(plotDf$rank)
+
+save(list="plotDf", file = "Simulation dataset.RData")
+
+```
+
+```{r simplot, fig.height= 4, fig.width=11, fig.cap = "White bins correspond to the observed ranking"}
+require(hrbrthemes)
+require(plotly)
+load("Simulation dataset.RData")
+
+# Add final ranking
+
+plotDf$rankFinal[plotDf$team=="Picchio FC"] <- 1
+plotDf$rankFinal[plotDf$team=="FC Lausangeles Galaxy"] <- 2
+plotDf$rankFinal[plotDf$team=="Real Katenaccio"] <- 3
+plotDf$rankFinal[plotDf$team=="Atletico Focaccia"] <- 4
+plotDf$rankFinal[plotDf$team=="Brisolo"] <- 5
+plotDf$rankFinal[plotDf$team=="Askari"] <- 6
+plotDf$rankFinal[plotDf$team=="FC Sellaronda"] <- 7
+plotDf$rankFinal[plotDf$team=="L’Androne Inisvizzero"] <- 8
+plotDf$rankFinal[plotDf$team=="US Falco"] <- 9
+plotDf$rankFinal[plotDf$team=="Terra Promessa"] <- 10
+
+cond <- plotDf$rankFinal == plotDf$rank
+
+# Plots 
+p <- plotDf %>%
+      mutate(team = fct_reorder(team, rankFinal)) %>%
+        ggplot(aes(x=rank, color=team, fill=team)) +
+          geom_histogram(alpha=0.6, binwidth = 1) +
+          geom_histogram(
+            data=subset(plotDf, cond==TRUE), 
+            binwidth=1, 
+            fill="white") +
+          scale_fill_viridis(discrete=TRUE) +
+          scale_color_viridis(discrete=TRUE) +
+          scale_x_continuous(
+            name="Rank", 
+            limits=c(0,11), 
+            breaks=c(1,2,3, 4, 5, 6, 7, 8, 9, 10)) +
+          theme_minimal() +
+          theme(
+            legend.position="none",
+            panel.spacing = unit(0.1, "lines"),
+            strip.text.x = element_text(size = 10)) +
+          ylab("Simulations (tot: 10.000)") +
+          facet_wrap(
+            ~fct_reorder(team, rankFinal), 
+            nrow = 2, 
+            scales = "free_x",
+            switch = "y") + 
+          labs(
+            title="Simulation results: frequency of final ranking by player for 10.000 randomly chosen permutations of initial drawing order",
+            caption= "White bins correspond to the observed ranking for team")
+
+p <- ggplotly(p)
+htmlwidgets::saveWidget(as_widget(p), "Risultati simulazioni.html")
+```
+
+
