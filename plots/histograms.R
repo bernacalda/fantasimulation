@@ -1,6 +1,9 @@
-require
+library(tidyverse)
+library(readr)
+library(viridis)
 require(hrbrthemes)
 require(plotly)
+
 load("Simulation dataset.RData")          # From simulations.Rdata
 
 # Add final ranking
