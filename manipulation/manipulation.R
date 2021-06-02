@@ -1,8 +1,6 @@
 library(tidyverse)
 library(readr)
-library(viridis)
-library(gtools)
-library(TouRnament)
+
 
 # This script imports an excel file called "Calendario" from fantaleghe.it and return a list with scores in each match day
 
