@@ -1,5 +1,9 @@
 # Computes and plots standard deviations of each team
 
+library(tidyverse)
+library(readr)
+library(viridis)
+
 # Load workspace from manipulation.R: mdsplit and scoreDf
 load("manipulation.RData")
 
